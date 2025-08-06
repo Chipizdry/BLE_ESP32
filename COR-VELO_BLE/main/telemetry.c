@@ -11,13 +11,17 @@
 #include "esp_bt_main.h"
 #include "string.h"
 
+
 #define TAG "TELEMETRY"
 #define DEVICE_NAME "COR-VELO"
-#define SERVICE_UUID 0x180D 
-#define CHAR_UUID    0x2A05
-#define GATTS_NUM_HANDLE 4 
+#define SERVICE_UUID 0xFFF0              // Кастомный UUID сервиса
+#define CHAR_UUID_TX 0xFFF1              // UUID для передачи данных (от устройства)
+#define CHAR_UUID_RX 0xFFF2              // UUID для приема данных (на устройство)
+#define GATTS_NUM_HANDLE 6               // Увеличено для двух характеристик
 #define TELEMETRY_APP_ID 0
 
+static uint8_t rx_data[20];              // Буфер для входящих данных
+static bool notifications_enabled = false;
 // === Глобальные объекты ===
 static esp_ble_adv_params_t adv_params = {
     .adv_int_min = 0x100,  // 256*0.625ms = 160ms
@@ -65,44 +69,41 @@ static void telemetry_notify_task(void *arg);
 
 // === GATT атрибуты ===
 static esp_gatts_attr_db_t telemetry_gatt_db[GATTS_NUM_HANDLE] = {
-    // Service Declaration
     [0] = {
         {ESP_GATT_AUTO_RSP},
-        {
-            ESP_UUID_LEN_16, (uint8_t[]){0x00, 0x28}, // Primary Service UUID
-            ESP_GATT_PERM_READ,
-            sizeof(uint16_t), sizeof(uint16_t), (uint8_t[]){(SERVICE_UUID & 0xFF), (SERVICE_UUID >> 8)}
-        }
+        {ESP_UUID_LEN_16, (uint8_t[]){0x00, 0x28},
+        ESP_GATT_PERM_READ, sizeof(uint16_t), sizeof(uint16_t), (uint8_t[]){(SERVICE_UUID & 0xFF), (SERVICE_UUID >> 8)}}
     },
-    // Characteristic Declaration
     [1] = {
         {ESP_GATT_AUTO_RSP},
-        {
-            ESP_UUID_LEN_16, (uint8_t[]){0x03, 0x28}, // Characteristic Properties
-            ESP_GATT_PERM_READ,
-            sizeof(uint8_t), sizeof(uint8_t), (uint8_t[]){ESP_GATT_CHAR_PROP_BIT_NOTIFY}
-        }
+        {ESP_UUID_LEN_16, (uint8_t[]){0x03, 0x28},
+        ESP_GATT_PERM_READ, sizeof(uint8_t), sizeof(uint8_t), (uint8_t[]){ESP_GATT_CHAR_PROP_BIT_NOTIFY}}
     },
-    // Characteristic Value
     [2] = {
         {ESP_GATT_AUTO_RSP},
-        {
-            ESP_UUID_LEN_16, (uint8_t[]){(CHAR_UUID & 0xFF), (CHAR_UUID >> 8)},
-            ESP_GATT_PERM_READ,
-            sizeof(telemetry_char_value),
-            telemetry_char_value
-        }
+        {ESP_UUID_LEN_16, (uint8_t[]){(CHAR_UUID_TX & 0xFF), (CHAR_UUID_TX >> 8)},
+        ESP_GATT_PERM_READ, sizeof(telemetry_char_value), sizeof(telemetry_char_value), NULL}  // <== пока NULL
     },
-    // Client Characteristic Configuration Descriptor (CCCD)
     [3] = {
         {ESP_GATT_AUTO_RSP},
-        {
-            ESP_UUID_LEN_16, (uint8_t[]){0x02, 0x29}, // CCCD UUID
-            ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
-            sizeof(uint16_t), sizeof(uint16_t), (uint8_t[]){0x00, 0x00} // Default: notifications disabled
-        }
+        {ESP_UUID_LEN_16, (uint8_t[]){0x02, 0x29},
+        ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
+        sizeof(uint16_t), sizeof(uint16_t), (uint8_t[]){0x00, 0x00}}
+    },
+    [4] = {
+        {ESP_GATT_AUTO_RSP},
+        {ESP_UUID_LEN_16, (uint8_t[]){0x03, 0x28},
+        ESP_GATT_PERM_READ, sizeof(uint8_t), sizeof(uint8_t),
+        (uint8_t[]){ESP_GATT_CHAR_PROP_BIT_WRITE | ESP_GATT_CHAR_PROP_BIT_WRITE_NR}}
+    },
+    [5] = {
+        {ESP_GATT_AUTO_RSP},
+        {ESP_UUID_LEN_16, (uint8_t[]){(CHAR_UUID_RX & 0xFF), (CHAR_UUID_RX >> 8)},
+        ESP_GATT_PERM_WRITE, sizeof(rx_data), sizeof(rx_data), NULL}  // <== пока NULL
     }
 };
+
+
 
 // === Инициализация BLE ===
 void telemetry_init(void) {
@@ -156,6 +157,8 @@ void telemetry_init(void) {
     ESP_ERROR_CHECK(esp_ble_gatts_register_callback(gatts_event_handler));
     ESP_ERROR_CHECK(esp_ble_gap_register_callback(gap_event_handler));
     ESP_ERROR_CHECK(esp_ble_gatts_app_register(TELEMETRY_APP_ID));
+    telemetry_gatt_db[2].att_desc.value = telemetry_char_value;
+    telemetry_gatt_db[5].att_desc.value = rx_data;
 }
 
 
@@ -223,13 +226,16 @@ switch (event) {
 
 
     case ESP_GATTS_WRITE_EVT:
-    if (param->write.handle == telemetry_handle_table[3]) { // Проверяем CCCD handle
+    if (param->write.handle == telemetry_handle_table[3]) { // CCCD
         uint16_t cccd_value = *(uint16_t*)param->write.value;
-        ESP_LOGI(TAG, "CCCD write: %04x", cccd_value);
-        if (cccd_value == 0x0001) {
-            ESP_LOGI(TAG, "Notifications enabled");
-        } else {
-            ESP_LOGI(TAG, "Notifications disabled");
+        notifications_enabled = (cccd_value == 0x0001);
+        ESP_LOGI(TAG, "Notifications %s", notifications_enabled ? "enabled" : "disabled");
+    }
+    else if (param->write.handle == telemetry_handle_table[5]) { // RX characteristic
+        ESP_LOGI(TAG, "Received data, len=%d", param->write.len);
+        // Обработка входящих данных
+        if (param->write.len > 0) {
+            ESP_LOGI(TAG, "Data: %.*s", param->write.len, param->write.value);
         }
     }
     break;
@@ -260,14 +266,16 @@ switch (event) {
 }
 
 // === Задача телеметрии ===
+
+
 static void telemetry_notify_task(void *arg) {
     TickType_t last_wake_time = xTaskGetTickCount();
-    const TickType_t frequency = pdMS_TO_TICKS(10);  // 500Hz ~= 2мс
+    const TickType_t frequency = pdMS_TO_TICKS(10);
 
     while (1) {
         vTaskDelayUntil(&last_wake_time, frequency);
 
-        if (device_connected) {
+        if (device_connected && notifications_enabled) {
             uint8_t telemetry_data[8];
             int16_t accelX = 1000;
             int16_t accelY = 1000;
@@ -282,7 +290,7 @@ static void telemetry_notify_task(void *arg) {
             esp_err_t ret = esp_ble_gatts_send_indicate(
                 telemetry_gatts_if,
                 telemetry_conn_id,
-                telemetry_handle_table[2], // Handle значения характеристики
+                telemetry_handle_table[2], // TX characteristic value handle
                 sizeof(telemetry_data),
                 telemetry_data,
                 false
