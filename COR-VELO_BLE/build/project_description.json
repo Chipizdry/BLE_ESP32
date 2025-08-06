@@ -1,7 +1,7 @@
 {
     "version":            "1.1",
     "project_name":       "COR-VELO_BLE",
-    "project_version":    "4cced707-dirty",
+    "project_version":    "226735c7-dirty",
     "project_path":       "D:/GitHub/BLE_ESP32/COR-VELO_BLE",
     "idf_path":           "D:/Espressif/frameworks/esp-idf-v5.3.1/v5.3.1/esp-idf",
     "build_dir":          "D:/GitHub/BLE_ESP32/COR-VELO_BLE/build",
