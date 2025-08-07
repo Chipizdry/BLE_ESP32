@@ -110,3 +110,7 @@
 7479	8126	7761926341136738	D:/GitHub/BLE_ESP32/COR-VELO_BLE/build/bootloader/.bin_timestamp	898bfe50345a9c83
 8126	8330	0	esp-idf/esptool_py/CMakeFiles/bootloader_check_size	eb1b8345c793309c
 8126	8330	0	D:/GitHub/BLE_ESP32/COR-VELO_BLE/build/bootloader/esp-idf/esptool_py/CMakeFiles/bootloader_check_size	eb1b8345c793309c
+27	243	0	esp-idf/esptool_py/CMakeFiles/bootloader_check_size	eb1b8345c793309c
+27	243	0	D:/GitHub/BLE_ESP32/COR-VELO_BLE/build/bootloader/esp-idf/esptool_py/CMakeFiles/bootloader_check_size	eb1b8345c793309c
+39	245	0	esp-idf/esptool_py/CMakeFiles/bootloader_check_size	eb1b8345c793309c
+39	245	0	D:/GitHub/BLE_ESP32/COR-VELO_BLE/build/bootloader/esp-idf/esptool_py/CMakeFiles/bootloader_check_size	eb1b8345c793309c
